@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8">
         <title>Login</title>
-        <link rel="stylesheet" href="{{ url_for('static', filename='style.css' }}">
+        <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
         <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.1/css/all.css">
     </head>
     <body>
@@ -11,9 +11,9 @@
             <h1>Login</h1>
             <div class="links">
                 <a href="{{ url_for('login') }}" class="active">Login</a>
-                <a href="#">Register</a>
+                <a href="{{ url_for('register') }}">Register</a>
             </div>
-            <form action="{{ url_for('login') }}" method="post">
+            <form class="ajax-form" action="{{ url_for('login') }}" method="post">
                 <label for="username">
                     <i class="fas fa-user"></i>
                 </label>
