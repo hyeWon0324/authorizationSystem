@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session, make_response
 from flask_mysqldb import MySQL
 from flask_mail import Mail, Message
+from flask_scrypt import generate_random_salt, generate_password_hash, check_password_hash
 from passlib.hash import sha256_crypt
 #from flask.ext.bcrypt import Bcrypt
 import MySQLdb.cursors 
@@ -34,7 +35,6 @@ mail = Mail(app)
 
 account_activation_required = False
 
-
 # http://localhost:5000/pythonlogin/ - login page, GET and POST requests
 @app.route('/pythonlogin/', methods=['GET', 'POST'])
 def login():
@@ -46,43 +46,47 @@ def login():
 
         #pw_hash = bcrypt.generate_password_hash(password, 10)
 
-        hash = password + app.secret_key
-        hash = hashlib.sha1(hash.encode())
-        password = hash.hexdigest()
+        #hash = password + app.secret_key
+        #hash = hashlib.sha1(hash.encode())
+        #password = hash.hexdigest()
 
         # Check if account exists using MySQL
         #connection = mysql.connector.connect(host='localhost',                                         database='pythonlogin',                                         user='root',                                         password='1234')
         cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
-        cursor.execute('SELECT * FROM accounts WHERE username = %s AND password = %s', (username, password))
+        cursor.execute('SELECT * FROM accounts WHERE username = %s', (username))
         account = cursor.fetchone()
-        if account: 
-            session['loggedin'] = True
-            session['id'] = account['id']
-            session['username'] = account['username']
-            if 'rememberme' in request.form:
-                # Create hash to store as cookie
-                hash = account['username'] + request.form['password'] + app.secret_key 
-                hash = hashlib.sha1(hash.encode())
-                hash = hash.hexdigest()
-
-                # Cookie expire in 90days 
-                expire_date = datetime.datetime.now() + datetime.timedelta(days=90)
-                resp = make_response('Success', 200)
-                resp.set_cookie('rememberme', hash, expires=expire_date)
-
-                # Update rememeberme in accounts table to the cookie hash 
-                cursor.execute('UPDATE accounts SET rememberme = %s WHERE id = %s', (hash, account['id']))
-                mysql.connection.commit()
-                return resp
-            cursor.close()
-            mysql.connection.close()
-            return '로그인 성공!'
-        else:
-            return '잘못된 아이디 또는 패스워드'
         
+        if account:
+
+            salt = account['salt']
+            password_hash = account['password']
+
+            if check_password_hash(password, password_hash, salt): 
+                session['loggedin'] = True
+                session['id'] = account['id']
+                session['username'] = account['username']
+                if 'rememberme' in request.form:
+                    # Create hash to store as cookie
+                    #hash = account['username'] + request.form['password'] + app.secret_key 
+                    #hash = hashlib.sha1(hash.encode())
+                    #hash = hash.hexdigest()
+
+                    # Cookie expire in 90days 
+                    expire_date = datetime.datetime.now() + datetime.timedelta(days=90)
+                    resp = make_response('Success', 200)
+                    resp.set_cookie('rememberme', hash, expires=expire_date)
+
+                    # Update rememeberme in accounts table to the cookie hash 
+                    cursor.execute('UPDATE accounts SET rememberme = %s WHERE id = %s', (hash, account['id']))
+                    mysql.connection.commit()
+                    return resp
+                cursor.close()
+                mysql.connection.close()
+                return 'Success'
+            else:
+                msg = '잘못된 비밀번호'
     else:
-        msg = '아이디 또는 패스워드를 입력하세요'
-        
+        msg = '존재하지 않는 아이디'
     return render_template('login.html', msg=msg)
 
 # http://localhost:5000/pythonlogin/logout - logout page 
@@ -99,7 +103,7 @@ def logout():
     return resp 
     
 
-# http://localhost:5000/pythonlogin/register - registration page 
+# http://localhost:5000/pythonlogin/register - registration page GET and POST requests
 @app.route('/pythonlogin/register', methods=['GET', 'POST'])
 def register():
     msg=''
@@ -126,7 +130,12 @@ def register():
 
             # Generate a random unique id for activation code 
             activation_code = uuid.uuid4()
-            cursor.execute('INSERT INTO accounts VALUES (NULL, %s, %s, %s, %s, "")', (username, password, email, activation_code))
+            
+            # Scrypt password hashing and random salt generation
+            salt = generate_random_salt()
+            password_hash = generate_password_hash(password, salt)
+
+            cursor.execute('INSERT INTO accounts VALUES (NULL, %s, %s, %s, %s, %s,"")', (username, password_hash, salt, email, activation_code))
             mysql.connection.commit()
 
             email = Message('Account Activation Required', sender = 'parkhw0324@gmail.com', recipients = [email])
@@ -141,12 +150,16 @@ def register():
             cursor.execute('INSERT INTO accounts VALUES (NULL, %s, %s, %s)', (username, password, email))
             mysql.connection.commit()
             msg = '회원 등록 성공!'
+        
+        cursor.close()
+        mysql.connection.close()
     elif request.method == 'POST':
         # Form is empty
         msg = '회원 등록 정보를 입력해주세요'
+    
     return render_template('register.html', msg=msg)
 
-# http://localhost:5000/pythinlogin/activate/<email>/<code> - 이메일과 활성화 코드가 올바른 경우 계정을 활성화
+# http://localhost:5000/pythonlogin/activate/<email>/<code> - 이메일과 활성화 코드가 올바른 경우 계정을 활성화
 @app.route('/pythonlogin/activate/<string:email>/<string:code>', methods=['GET'])
 def activate(email, code):
     cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
@@ -174,7 +187,7 @@ def loggedin():
     # account not logged in
     return False
 
-# http://localhost:5000/pythinlogin/home - Home page only accessible for loggedin users
+# http://localhost:5000/pythonlogin/home - Home page only accessible for loggedin users
 @app.route('/pythonlogin/home')
 def home():
 
@@ -182,7 +195,7 @@ def home():
         return render_template('home.html', username=session['username'])
     return redirect(url_for('login'))
 
-# http://localhost:5000/pythinlogin/profile - Profile page, only accessible for loggedin users 
+# http://localhost:5000/pythonlogin/profile - Profile page, only accessible for loggedin users 
 @app.route('/pythonlogin/profile')
 def profile():
 
@@ -208,12 +221,16 @@ def edit_profile():
             password = request.form['password']
             email = request.form['email']
             # Hash password 
-            hash = password + app.secret_key
-            hash = hashlib.sha1(hash.encode())
-            password = hash.hexdigest()
+            #hash = password + app.secret_key
+            #hash = hashlib.sha1(hash.encode())
+            #password = hash.hexdigest()
+
+             # Scrypt password hashing and random salt generation
+            salt = generate_random_salt()
+            password_hash = generate_password_hash(password, salt)
 
             # Update account with new info 
-            cursor.execute('UPDATE accounts SET username = %s, password = %s, email = %s WHERE id = %s', (username, password, email, session['id']))
+            cursor.execute('UPDATE accounts SET username = %s, password = %s, salt = %s, email = %s WHERE id = %s', (username, password_hash, salt, email, session['id']))
             mysql.connection.commit() 
             msg = '업데이트 성공!'
 
